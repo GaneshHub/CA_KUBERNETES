@@ -1,0 +1,149 @@
+Description:
+
+Kubernetes provides a variety of features to get the most out of your containerized applications. This lab will train you on Pod configuration concepts that teach you how to persist data beyond the lifecycle of a Pod to improve the robustness of your applications.
+
+Learning Objectives:
+
+Understand PersistentVolumeClaims for storage
+
+Connecting to the Kubernetes Cluster:
+=======================================
+You will use a multi-node Kubernetes cluster to practice persisting data that is independent of the lifecyle of Pods in this lab. This lab provides you with a Kubernetes cluster initialized with kubeadm and running on Ubuntu. The cluster is similar to the clusters used in official CNCF Kubernetes certification exams. It has a bastion node for connecting to the Kubernetes cluster nodes that includes a single control-plane node. The infrastructure is deployed on AWS. You can log in to AWS using the lab credentials and Open Environment link when needed.
+
+The following instructions connect to the cluster using a web browser terminal. You can also connect using your preferred SSH client rather than the browser terminal by using the PPK (Windows) or PEM (Mac/Linux) key files in the Credentials section of this lab to connect to the bastion host's IP address which appears below the credentials once it is available.
+
+Instructions
+1. Click Open Development Env. once you see 100% Setup completed:
+This connects you to the browser terminal.
+
+2. At the login prompt enter the following credentials:
+
+login: Enter ca
+Password: Press enter (no password)
+You are then presented with the shell prompt:
+
+3. Once you see Open Environment 100% Setup completed (It usually takes 1 minute from the time you start the lab):
+
+Copy the Cluster SSH command that appears at the bottom of the lab Credentials panel:
+
+ssh ubuntu@54.185.239.247 -oStrictHostKeyChecking=no
+
+4. In the browser terminal, enter the Cluster SSH command at the prompt:
+
+You are now connected to the bastion node in the cluster:
+
+5. To ensure the cluster has one available worker node (ROLES set to <none>) before proceeding to use the cluster, enter the following command to watch the cluster come up and press ctrl+c to stop watching: 
+
+watch kubectl get nodes
+
+It usually takes 2 minutes from the time you start the lab to see a worker node join the cluster. You can proceed to the next step before seeing the worker node, but one worker node should be available before you start working with the cluster.
+
+Note: You may see The connection to the server 10.0.0.100:6443 was refused - did you specify the right host or port? while the control plane's API server prepares to accept requests. It is not a problem and the control-plane node will appear before long.
+
+Using Persistent Data with Pods:
+=================================
+Persistent Volumes (PVs) are Kubernetes resources that represent storage in the cluster. Unlike regular Pod volumes (volumes of the default emptyDir type) which exist only during the lifetime of the Pod containing volume, PVs do not have a lifetime connected to a Pod. Thus, they can be used by multiple Pods over time, or even at the same time. Different types of storage can be used by PVs including NFS, iSCSI, and cloud-provided storage volumes, such as AWS Elastic Block Store (EBS) volumes. The list of supported PVs is here. Pods claim PV resources through Persistent Volume Claims (PVCs). A Pod can claim a specific amount of PV storage and an access mode, such as read/write by only one node, through a PVC. The PV will be automatically created as long as the cluster supports dynamic provisioning. This allows you to consider PVCs as storage.
+
+The cluster you are using is running in AWS and is configured to automatically create EBS volumes when using PVCs. You will demonstrate how  in this lab step
+
+Instructions
+1. Create a Namespace for the resources you'll create in this lab step and change your default kubectl context to use the Namespace:
+
+# Create namespace
+kubectl create namespace persistence
+# Set namespace as the default for the current context
+kubectl config set-context $(kubectl config current-context) --namespace=persistence
+
+It is a best practice to use namespaces to logically organize your Kubernetes resources.
+
+2. Create a PVC:
+
+cat << 'EOF' > pvc.yaml
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: db-data
+spec:
+  # Only one node can mount the volume in Read/Write
+  # mode at a time
+  accessModes:
+  - ReadWriteOnce 
+  resources:
+    requests:
+      storage: 2Gi
+EOF
+kubectl create -f pvc.yaml
+
+You will use the PVC to store data in a database, a common example of persistent data that should survive in case a Pod were to be terminated.
+
+3. Use get to display the PVC:
+
+kubectl get pvc
+
+pvc is a kubectl alias for persistentvolumeclaim, so you don't need to type the complete Resource name. The output shows the PVC STATUS is Bound, but the output may show Pending while the underlying PV is being created. The STORAGECLASS is gp2 which is the type of automatically configured Amazon EBS volumes that are created.
+
+4. Use get to display the underlying PV:
+
+kubectl get pv
+
+Similar information is displayed. There is a RECLAIM POLICY associated with the PV. The Delete policy means the PV is deleted once the PVC is deleted. It is also possible to keep the PV using other reclaim policies.
+
+5. Create a Pod that mounts the volume provided by the PVC:
+
+cat << 'EOF' > db.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db 
+spec:
+  containers:
+  - image: mongo:4.0.6
+    name: mongodb
+    # Mount as volume 
+    volumeMounts:
+    - name: data
+      mountPath: /data/db
+    ports:
+    - containerPort: 27017
+      protocol: TCP
+  volumes:
+  - name: data
+    # Declare the PVC to use for the volume
+    persistentVolumeClaim:
+      claimName: db-data
+EOF
+kubectl create -f db.yaml
+
+The Pod uses the MongoDB image, which is a NoSQL database that stores its database files at /data/db by default. The PVC is mounted as a volume at that path causing the database files to be written to the EBS Persistent volume.
+
+6. Run the MongoDB CLI client to insert a document that contains the message "I was here" into a test database and then confirm it was inserted:
+
+kubectl exec db -it -- mongo testdb --quiet --eval \
+  'db.messages.insert({"message": "I was here"}); db.messages.findOne().message'
+
+  The details of the MongoDB client are not important for this Lab. The insert operation adds the document to the database and the findOne operation retrieves one document from the database. The message will allow you to verify the data is persisted even after the pod is deleted.
+
+Note: IF you see an error, re-issue the command every 15 seconds until it succeeds after the Pod is fully initialized.
+
+7. Delete the Pod:
+
+kubectl delete -f db.yaml
+
+At this point, a regular (emptyDir) volume would be destroyed and the database files would be lost.
+
+8. Create a new database Pod:
+
+kubectl create -f db.yaml
+
+Although the Pod is new, the Pod's spec refers to the same PVC as before.
+
+9. Attempt to find a document in the test database:
+
+kubectl exec db -it -- mongo testdb --quiet --eval 'db.messages.findOne().message'
+
+The output confirms the data was persisted by using the PVC.
+
+Note: IF you see an error, re-issue the command every 15 seconds until it succeeds after the Pod is fully initialized.
+
+Summary
+In this lab step, you learned about PVCs and PVs. You can use a PVC to persist data for an amount of time that is independent of any Pod's lifetime. That is in contrast to regular (emptyDir) volumes which are destroyed when a Pod is destroyed.
