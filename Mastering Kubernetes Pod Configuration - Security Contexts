@@ -1,0 +1,174 @@
+Description
+Kubernetes provides a variety of features to get the most out of your containerized applications. This lab will train you on Pod configuration concepts that teach you how to configure security features to harden your Kubernetes application deployments.
+
+Learning Objectives
+Understand Pod and container security contexts
+
+Connecting to the Kubernetes Cluster
+=======================================
+You will use a multi-node Kubernetes cluster to practice improving your Pod security posture in this lab. This lab provides you with a Kubernetes cluster initialized with kubeadm and running on Ubuntu. The cluster is similar to the clusters used in official CNCF Kubernetes certification exams. It has a bastion node for connecting to the Kubernetes cluster nodes that includes a single control-plane node. The infrastructure is deployed on AWS. You can log in to AWS using the lab credentials and Open Environment link when needed.
+
+The following instructions connect to the cluster using a web browser terminal. You can also connect using your preferred SSH client rather than the browser terminal by using the PPK (Windows) or PEM (Mac/Linux) key files in the Credentials section of this lab to connect to the bastion host's IP address which appears below the credentials once it is available.
+
+Note: The Open Environment link to the left takes you to AWS, while the Open Development Env. link takes you to the web terminal.
+
+ 
+
+Instructions
+1. Click Open Development Env. once you see 100% Setup completed:
+
+2. At the login prompt enter the following credentials:
+
+login: Enter ca
+Password: Press enter (no password)
+You are then presented with the shell prompt:
+
+3. Once you see Open Environment 100% Setup completed (It usually takes 1 minute from the time you start the lab):
+
+Copy the Cluster SSH command that appears at the bottom of the lab Credentials panel:
+
+4. In the browser terminal, enter the Cluster SSH command at the prompt:
+
+ssh ubuntu@18.236.246.196 -oStrictHostKeyChecking=no
+
+You are now connected to the bastion node in the cluster:
+
+5. To ensure the cluster has one available worker node (ROLES set to <none>) before proceeding to use the cluster, enter the following command to watch the cluster come up and press ctrl+c to stop watching: 
+
+watch kubectl get nodes
+
+It usually takes 2 minutes from the time you start the lab to see a worker node join the cluster. You can proceed to the next step before seeing the worker node, but one worker node should be available before you start working with the cluster.
+
+Note: You may see The connection to the server 10.0.0.100:6443 was refused - did you specify the right host or port? while the control plane's API server prepares to accept requests. It is not a problem and the control-plane node will appear before long.
+
+Configuring Pod Security Contexts:
+=================================
+
+Introduction
+A security context allows you to set access control for Pods, as well as containers and volumes in Pods, when applicable. Examples of access controls that can be set with security contexts include:
+
+The user ID and group IDs of the first process running in a container
+The group ID of volumes
+If a container's root file system is read-only
+Security-Enhanced Linux (SELinux) options
+The privileged status of containers, which allows the container to do almost everything root can do on the host if enabled
+Whether or not privilege escalation, where child processes can have more privileges than their parent, is allowed
+When a security context field is configured for a Pod and one of the Pod's containers, the container's setting takes precedence. Configuring the security context of Pods and containers can greatly reduce the security risk posed by using third-party images.
+
+In this lab step, you will review the available options for configuring security contexts. You will then create multiple Pods with differing security contexts to observe the effects of each.
+
+Instructions
+1. Explain the available Pod-level security context fields:
+kubectl explain pod.spec.securityContext | more
+Briefly read through each of the fields to get an understanding of what each can be used for.
+
+2. Explain the available container-level security context fields:
+
+kubectl explain pod.spec.containers.securityContext | more
+
+Briefly read through each of the fields to get an understanding of what each can be used for.
+
+3. Create the following Pod manifest file:
+
+cat << EOF > pod-no-security-context.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-context-test-1
+spec:
+  containers:
+  - image: busybox:1.30.1
+    name: busybox
+    args:
+    - sleep
+    - "3600"
+EOF
+
+The pod simply runs a container that sleeps.
+
+4. Create the Pod and use exec to list the available devices in the container:
+
+kubectl create -f pod-no-security-context.yaml
+kubectl exec security-context-test-1 -- ls /dev
+
+There are only a minimal number of devices available in the container and none that can do any harm. For the sake of what you will do next, notice there are no block devices. In particular, there is no nvme0n1p1 device that is the host's file system disk.
+
+5. Delete the previous Pod and create a similar Pod that has a privileged container:
+
+kubectl delete -f pod-no-security-context.yaml
+
+cat > pod-privileged.yaml <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-context-test-2
+spec:
+  containers:
+  - image: busybox:1.30.1
+    name: busybox
+    args:
+    - sleep
+    - "3600"
+    securityContext:
+      privileged: true
+EOF
+
+kubectl create -f pod-privileged.yaml
+
+Note the securityContext field included in the spec.
+
+6. List the devices available in the container:
+
+All of the host devices are available including the host file system disk nvme0n1p1. This could be a major security breach and shows the importance of carefully considering if you should ever use a privileged container.
+
+ 8. Create another pod that includes a Pod security context as well as a container security context:
+ kubectl delete -f pod-privileged.yaml
+
+cat << EOF > pod-runas.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-context-test-3
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+  containers:
+  - image: busybox:1.30.1
+    name: busybox
+    args:
+    - sleep
+    - "3600"
+    securityContext:
+      runAsUser: 2000
+      readOnlyRootFilesystem: true
+EOF
+
+kubectl create -f pod-runas.yaml
+
+The Pod security context enforces that container processes do not run as root (runAsNonRoot) and sets the user ID of the container process to 1000. The container securityContext sets the container process' user ID to 2000 and sets the root file system to read-only.
+
+9. Open a shell in the container:
+
+kubectl exec security-context-test-3 -it -- /bin/sh
+
+Notice that the shell prompt is $ and not # indicating that you are not the root user.
+
+10. List the running processes in the container: ps
+
+The USER ID is 2000 illustrating that it is not root and that the container security context overrides the setting in the Pod security context when both security contexts include the same field. Whenever possible you should not run as root.
+
+touch /tmp/test-file
+exit
+
+The attempt fails due to the Read-only file system. When possible, it is best to use read-only root file systems to harden your container environments. A best practice is to use volumes to mount any files that require modification, allowing the root file system to be read-only.
+
+12. Delete the pod resource:
+
+kubectl delete -f pod-runas.yaml
+
+Summary
+In this lab step, you understood the use and capabilities of Pod and container security contexts. You also learned about potential risks and how to protect your cluster from them.
+
+ 

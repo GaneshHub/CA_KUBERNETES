@@ -1,0 +1,280 @@
+Description
+Kubernetes network policies allow you to control network access to and from Pods. Network policies are namespaced resources and allow you to specify ingress (allowed incoming traffic) and egress (allowed outgoing traffic) rules. You define rules that select what Pods, namespaces, or IP address ranges the policy applies to.
+
+Learning Objectives
+Configure network policies to control Pod communication
+
+Connecting to the Kubernetes Cluster:
+========================================
+Introduction
+You will use a multi-node Kubernetes cluster to practice using network policies to restrict network access to and from Pods in this lab. This lab provides you with a Kubernetes cluster initialized with kubeadm and running on Ubuntu. The cluster is similar to the clusters used in official CNCF Kubernetes certification exams. It has a bastion node for connecting to the Kubernetes cluster nodes that includes a single control-plane node. The infrastructure is deployed on AWS. You can log in to AWS using the lab credentials and Open Environment link when needed.
+
+The following instructions connect to the cluster using a web browser terminal. You can also connect using your preferred SSH client rather than the browser terminal by using the PPK (Windows) or PEM (Mac/Linux) key files in the Credentials section of this lab to connect to the bastion host's IP address which appears below the credentials once it is available.
+
+Note: The Open Environment link to the left takes you to AWS, while the Open Development Env. link takes you to the web terminal.
+
+Instructions
+1. Click Open Development Env. once you see 100% Setup completed:
+
+This connects you to the browser terminal.
+
+ 
+
+2. At the login prompt enter the following credentials:
+
+login: Enter ca
+Password: Press enter (no password)
+You are then presented with the shell prompt:
+
+3. Once you see Open Environment 100% Setup completed (It usually takes 1 minute from the time you start the lab):
+
+Copy the Cluster SSH command that appears at the bottom of the lab Credentials panel:
+
+ssh ubuntu@54.214.221.167 -oStrictHostKeyChecking=no
+
+4. In the browser terminal, enter the Cluster SSH command at the prompt:
+
+You are now connected to the bastion node in the cluster:
+
+5. To ensure the cluster has one available worker node (ROLES set to <none>) before proceeding to use the cluster, enter the following command to watch the cluster come up and press ctrl+c to stop watching: 
+
+watch kubectl get nodes
+
+It usually takes 2 minutes from the time you start the lab to see a worker node join the cluster. You can proceed to the next step before seeing the worker node, but one worker node should be available before you start working with the cluster.
+
+Note: You may see The connection to the server 10.0.0.100:6443 was refused - did you specify the right host or port? while the control plane's API server prepares to accept requests. It is not a problem and the control-plane node will appear before long.
+
+Configuring Kubernetes Network Policies:
+=======================================
+Introduction
+A Kubernetes network policy declares how a set of pods are allowed to communicate with each other and other network endpoints. By default, pods accept traffic from any source and that poses an obvious security risk. Once a network policy selects a pod, that pod no longer accepts all traffic and instead follows the rules defined in the network policy. The rules can apply to ingress traffic or egress traffic and network policies are namespaced.
+
+There is one catch with network policies. You must be using a network provider plugin that supports network policies for network policy resources to have any effect. Examples of container network implementations that do support network policies are Calico (used in this lab) and Romana. Not all container networks support network policies, for example, flannel. The list of container network providers usually mentions if network policies are supported. If security is a concern, you should certainly be using a container network that supports network policies.
+
+In this lab step, you will inspect an existing network policy, and perform tests to see how they behave. You will finish by creating a new network policy.
+
+Instructions
+1. Inspect the deny-metadata network policy in the default namespace.
+
+kubectl get networkpolicy deny-metadata -o yaml
+
+Focus on the spec section:
+
+The policyTypes list can include one or both of Egress and Ingress depending on what type of traffic the policy applies to. In this case, only Egress is included, so the default ingress behavior of allowing all incoming traffic is not impacted (unless there were other network policies in the namespace that did impact ingress, which is not true in this case). A corresponding egress key is defined. If no egress key was defined, the default behavior would be to block all egress traffic. That is, the rules are whitelists that allow certain traffic and deny all other traffic by default. The egress policy whitelists all outgoing traffic (CIDR notation 0.0.0.0/0) except for the EC2 instance metadata IP address (CIDR notation 169.254.169.254/32). The next instruction will explain the different types of egress policies available.
+
+ 2. Explain the fields available for egress network policies:
+
+kubectl explain networkpolicy.spec.egress
+
+KIND:     NetworkPolicy
+VERSION:  networking.k8s.io/v1
+
+RESOURCE: egress <[]Object>
+
+DESCRIPTION:
+     List of egress rules to be applied to the selected pods. Outgoing traffic
+     is allowed if there are no NetworkPolicies selecting the pod (and cluster
+     policy otherwise allows the traffic), OR if the traffic matches at least
+     one egress rule across all of the NetworkPolicy objects whose podSelector
+     matches the pod. If this field is empty then this NetworkPolicy limits all
+     outgoing traffic (and serves solely to ensure that the pods it selects are
+     isolated by default). This field is beta-level in 1.8
+
+     NetworkPolicyEgressRule describes a particular set of traffic that is
+     allowed out of pods matched by a NetworkPolicySpec's podSelector. The
+     traffic must match both ports and to. This type is beta-level in 1.8
+
+FIELDS:
+   ports        <[]Object>
+     List of destination ports for outgoing traffic. Each item in this list is
+     combined using a logical OR. If this field is empty or missing, this rule
+     matches all ports (traffic not restricted by port). If this field is
+     present and contains at least one item, then this rule allows traffic only
+     if the traffic matches at least one port in the list.
+
+   to   <[]Object>
+     List of destinations for outgoing traffic of pods selected for this rule.
+     Items in this list are combined using a logical OR operation. If this field
+     is empty or missing, this rule matches all destinations (traffic not
+     restricted by destination). If this field is present and contains at least
+     one item, this rule allows traffic only if the traffic matches at least one
+     item in the to list.
+
+     Read through the output to understand the fields. The deny-metadata policy does not specify any ports, so it applies to all ports by default.
+
+     3. Explain the fields available for the to field of egress network policies:
+
+     kubectl explain networkpolicy.spec.egress.to
+
+     In addition to the ipBlock used by the deny-metadata policy, you can also select all pods within selected namespaces (namespaceSelector) or pods matching labels in the current namespace (podSelector).
+
+     DESCRIPTION:
+     List of destinations for outgoing traffic of pods selected for this rule.
+     Items in this list are combined using a logical OR operation. If this field
+     is empty or missing, this rule matches all destinations (traffic not
+     restricted by destination). If this field is present and contains at least
+     one item, this rule allows traffic only if the traffic matches at least one
+     item in the to list.
+
+     NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain
+     combinations of fields are allowed
+
+FIELDS:
+   ipBlock      <Object>
+     IPBlock defines policy on a particular IPBlock. If this field is set then
+     neither of the other fields can be.
+
+   namespaceSelector    <Object>
+     Selects Namespaces using cluster-scoped labels. This field follows standard
+     label selector semantics; if present but empty, it selects all namespaces.
+
+     If PodSelector is also set, then the NetworkPolicyPeer as a whole selects
+     the Pods matching PodSelector in the Namespaces selected by
+     NamespaceSelector. Otherwise it selects all Pods in the Namespaces selected
+     by NamespaceSelector.
+
+   podSelector  <Object>
+     This is a label selector which selects Pods. This field follows standard
+     label selector semantics; if present but empty, it selects all pods.
+
+     If NamespaceSelector is also set, then the NetworkPolicyPeer as a whole
+     selects the Pods matching PodSelector in the Namespaces selected by
+     NamespaceSelector. Otherwise it selects the Pods matching PodSelector in
+     the policy's own Namespace.
+
+
+In addition to the ipBlock used by the deny-metadata policy, you can also select all pods within selected namespaces (namespaceSelector) or pods matching labels in the current namespace (podSelector).
+
+4. Explain the fields within an ipBlock field of egress network policies:
+
+kubectl explain networkpolicy.spec.egress.to.ipBlock
+
+KIND:     NetworkPolicy
+VERSION:  networking.k8s.io/v1
+
+RESOURCE: ipBlock <Object>
+
+DESCRIPTION:
+     IPBlock defines policy on a particular IPBlock. If this field is set then
+     neither of the other fields can be.
+
+     IPBlock describes a particular CIDR (Ex. "192.168.1.1/24","2001:db9::/64")
+     that is allowed to the pods matched by a NetworkPolicySpec's podSelector.
+     The except entry describes CIDRs that should not be included within this
+     rule.
+
+FIELDS:
+   cidr <string> -required-
+     CIDR is a string representing the IP Block Valid examples are
+     "192.168.1.1/24" or "2001:db9::/64"
+
+   except       <[]string>
+     Except is a slice of CIDRs that should not be included within an IP Block
+     Valid examples are "192.168.1.1/24" or "2001:db9::/64" Except values will
+     be rejected if they are outside the CIDR range
+
+     
+     
+     You will test the network policy in the following instructions.
+
+
+     5. Create a pod in the default namespace and run /bin/sh in it:
+
+     kubectl run busybox --image=busybox --rm -it /bin/sh
+     After a short delay, you will see the following shell prompt:
+     / #
+
+     6. Use the wget command to connect to https://google.com:
+
+     wget https://google.com
+
+     The command succeeds in connecting and downloading the index.html page.
+
+     7. Attempt to connect to the EC2 instance metadata endpoint:
+
+     wget 169.254.169.254
+
+     The command will never connect to the endpoint because of the deny-metadata network policy.
+
+     
+     8. Press ctrl+c to cancel the command, and enter exit to stop the pod.
+
+ 
+
+    9. Retry connecting to the EC2 instance metadata endpoint using a container in a different namespace:
+    kubectl create namespace test
+   kubectl run busybox --image=busybox --rm -it -n test /bin/sh
+    wget 169.254.169.254
+
+    This time the connection succeeds. The EC2 instance metadata endpoint can potentially be used by malicious containers to extract credentials and modify resources in your AWS account. That is why it is important to prevent access to the metadata endpoint.
+
+    10. Extract AWS credentials using the metadata endpoint:
+
+    role=$(wget -qO- 169.254.169.254/latest/meta-data/iam/security-credentials)
+wget -qO- 169.254.169.254/latest/meta-data/iam/security-credentials/$role
+
+Depending on the IAM permissions of the instance role, the credentials could be used to do a lot of damage. Configuring the deny-metadata network policy to apply to all namespaces is much safer. Also, using a private image registry that only contains trusted images can help limit the risk of malicious code entering your cluster.
+
+11. Terminate the pod:
+
+12. Create a network policy resource file that uses pod selectors to allow incoming connections to a web server application tier from a cache tier:
+
+cat > app-policy.yaml <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-tiers
+  namespace: test
+spec:
+  podSelector:
+    matchLabels:
+      app-tier: web
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app-tier: cache
+    ports:
+    - port: 80
+EOF
+
+The network policy includes an ingress policy that uses a podSelector. The format is similar to egress policies, but uses a from field instead of a to field.
+
+ 13. Create the network policy resource:
+
+kubectl create -f app-policy.yaml
+
+
+14. Create an Nginx web server pod in the web server tier:
+
+kubectl run web-server -n test -l app-tier=web --image=nginx:1.15.1 --port 80
+
+15. Create a busybox pod in the cache tier to test the app-tiers network policy:
+
+# Get the web server pod's IP address
+web_ip=$(kubectl get pod -n test -o jsonpath='{.items[0].status.podIP}')
+# Pass in the web server IP addpress as an environment variable
+kubectl run busybox -n test -l app-tier=cache --image=busybox --env="web_ip=$web_ip" --rm -it /bin/sh
+# Send a requst to the web server on port 80
+wget $web_ip
+exit
+
+he request succeeds. You could also leverage the Kubernetes DNS to resolve the web server's pod DNS name to an IP address. However, you need the IP address to construct the default pod DNS name, so the IP address is used directly.
+
+16. Repeat the test, but using a pod that is not in the cache tier:
+
+kubectl run busybox -n test --image=busybox --env="web_ip=$web_ip" --rm -it /bin/sh
+wget $web_ip
+
+The request will never succeed.
+
+17. Press ctrl+c to stop the command, and enter the following to clean up the pods:
+
+exit
+kubectl delete pods -n test web-server
+
+Summary
+In this lab step, you learned how network policies can be used to control network access to pods in Kubernetes. Network policies can be declared using a mixture of namespace selectors, pod selectors, and IP blocks for both ingress and egress.
+
